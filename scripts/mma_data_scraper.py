@@ -75,7 +75,7 @@ class SherdogScraper(object):
 
     def get_org_data(self, org):
         """
-        Scrape data for a particular MMA organization
+        Scrape data for a particular NBA organization
         """
         # pull organization HTML data
         print 'Getting org data for: {0}'.format(org)
@@ -86,10 +86,14 @@ class SherdogScraper(object):
         description = self._safe_soup_str(soup, 'div', {'itemprop': 'description'})
 
         # Add org data to MySQL
-        org_fields = ['name', 'description']
-        org_vals = [org_name, description]
+        org_fields = ['team1', 'description']
+        org_vals = [team1_name, description]
         org_id = self._insert_data('organizations', org_fields, org_vals)
-
+        org_fields = ['team2', 'description']
+        org_vals = [team2_name, description]
+        org_id = self._insert_data('organizations', org_fields, org_vals)
+        
+        
         # Pull data for organization's events
         events = soup.findAll('tr', {'itemtype': 'http://schema.org/Event'})
         for event in events[:10]:
@@ -98,18 +102,18 @@ class SherdogScraper(object):
 
     def get_event_data(self, event_href, org_id):
         """
-        Scrape data for a particular MMA event
+        Scrape data for a particular NBA game
         """
         # pull event HTML data
         print '  Getting event data for: {0}'.format(event_href)
         event_url = '{}{}'.format(self.url, event_href)
         soup = self._get_soup(event_url)
 
-        event_name = self._safe_soup_str(soup, 'span', {'itemprop': 'name'})
+        event_name = self._safe_soup_str(soup, 'span', {'itemprop': 'team1:team2'})
         date = soup.find('meta', {'itemprop': 'startDate'})['content'][:10]
         location = self._safe_soup_str(soup, 'span', {'itemprop': 'location'})
 
-        event_fields = ['name', 'event_date', 'location', 'org_id']
+        event_fields = ['team1:team2', 'event_date', 'location', 'org_id']
         event_vals = [event_name, date, location, org_id]
         event_id = self._insert_data('events', event_fields, event_vals)
 
@@ -117,47 +121,47 @@ class SherdogScraper(object):
         fights = soup.findAll(['section', 'tr'], {'itemtype': 'http://schema.org/Event'})
         # import code; code.interact(local=locals())
         for fight in fights:
-            self.get_fight_data(fight, event_id)
+            self.get_game_data(fight, event_id)
 
-    def get_fight_data(self, fight_data, event_id):
+    def get_game_data(self, game_data, event_id):
         """
         Parse fight data
         """
         print '    Getting fight data'
         # get athletes (Tag can vary based on main event vs non-main fight)
-        athletes = fight_data.findAll('div', {'itemtype': 'http://schema.org/Person'})
-        if not athletes:
-            athletes = fight_data.findAll('td', {'itemtype': 'http://schema.org/Person'})
+        teams = game_data.findAll('div', {'itemtype': 'http://schema.org/Person'})
+        if not teams:
+            teams = game_data.findAll('td', {'itemtype': 'http://schema.org/Person'})
 
-        athlete1 = athletes[0]
-        athlete2 = athletes[1]
+        hometeam = teams[0]
+        awayteam = teams[1]
 
         # Get get athlete data and last insert IDs
-        id1 = self.get_athlete_data(athlete1.a['href'])
-        id2 = self.get_athlete_data(athlete2.a['href'])
+        id1 = self.get_teams_data(hometeam.a['href'])
+        id2 = self.get_teams_data(awayteam.a['href'])
 
         # Fight data that could be None if it's a future fight
-        result1 = None
-        result2 = None
+        hometeam_score = None
+        awayteam_score = None
         end_round = None
         end_round_time = None
         method = None
         referee = None
 
         # Get fight result
-        if athlete1.find('span', {'class': 'final_result'}):
-            result1 = self._safe_soup_str(athlete1, 'span', {'class': 'final_result'})
-        if athlete2.find('span', {'class': 'final_result'}):
-            result2 = self._safe_soup_str(athlete2, 'span', {'class': 'final_result'})
+        if hometeam.find('span', {'class': 'final_result'}):
+            hometeam_score = self._safe_soup_str(hometeam, 'span', {'class': 'final_result'})
+        if awayteam.find('span', {'class': 'final_result'}):
+            awayteam_score = self._safe_soup_str(awayteam, 'span', {'class': 'final_result'})
 
-        resume = fight_data.find('table', {'class': 'resume'})
+        resume = game_data.find('table', {'class': 'resume'})
         if resume:
-            fight_attrs = resume.findAll('td')
-            fight_attrs = dict([(x.em.string, x.contents[-1].strip()) for x in fight_attrs])
-            end_round = fight_attrs['Round']
-            end_round_time = fight_attrs['Time']
-            method = fight_attrs['Method']
-            referee = fight_attrs['Referee']
+            game_attrs = resume.findAll('td')
+            game_attrs = dict([(x.em.string, x.contents[-1].strip()) for x in game_attrs])
+            over_under = game_attrs['Over_Under']
+            spread = game_attrs['Spread']
+            total = game_attrs['Total_Pts']
+            cover = game_attrs['Cover']
         # else:
         #     table_data = fight_data.findAll('td')
         #     if table_data:
@@ -167,37 +171,36 @@ class SherdogScraper(object):
         #         referee = table_data[-3].span.string
 
         # Add fight data to MySQL
-        fight_fields = ['event_id', 'athlete1_id', 'athlete2_id', 'athlete1_result',
-                        'athlete2_result', 'end_round', 'end_round_time', 'method', 'referee']
-        fight_vals = [event_id, id1, id2, result1, result2, end_round, end_round_time, method, referee]
-        self._insert_data('fights', fight_fields, fight_vals)
+        fight_fields = ['event_id', 'hometeam_id', 'awayteam_id', 'hometeam_score',
+                        'awayteam_score', 'over_under', 'spread', 'total', 'cover']
+        fight_vals = [event_id, hometeam_id, awayteam_id, hometeam_score, awayteam_score, over_under, spread, total, cover]
+        self._insert_data('games', game_fields, game_vals)
 
-    def get_athlete_data(self, athlete_href):
+    def get_team_data(self, teams_href):
         """
-        Scrape data for a particular MMA athlete
+        Scrape data for a particular NBA team
         """
         # pull athlete HTML data
-        print '      Getting athlete data for: {0}'.format(athlete_href)
-        athlete_url = '{}{}'.format(self.url, athlete_href)
-        soup = self._get_soup(athlete_url)
+        print '      Getting team data for: {0}'.format(team_href)
+        team_url = '{}{}'.format(self.url, team_href)
+        soup = self._get_soup(team_url)
 
         # Parse name data
-        full_name = self._safe_soup_str(soup, 'span', {'class': 'fn'})
-        nick_name = soup.find('span', {'class': 'nickname'})
-        if nick_name:
-            nick_name = nick_name.find('em').string.replace("'", "\\'")
+        team_city = self._safe_soup_str(soup, 'span', {'class': 'fn'})
+        team_name = soup.find('span', {'class': 'nickname'})
+        if team_name:
+            team_name = team_name.find('em').string.replace("'", "\\'")
 
-        athlete_data = soup.find('div', {'class': 'data'})
+        team_data = soup.find('div', {'class': 'data'})
 
         # Parse Bio data
-        bio_data = athlete_data.find('div', {'class': 'bio'})
+        bio_data = team_data.find('div', {'class': 'bio'})
         # Parse birth info
-        birth_info = bio_data.find('div', {'class': 'birth_info'})
-        birth_date = self._safe_soup_str(birth_info, 'span', {'itemprop': 'birthDate'})
-        birth_locality = birth_info.find('span', {'itemprop': 'addressLocality'})
-        if birth_locality:
-            birth_locality = birth_locality.string
-        nationality = self._safe_soup_str(birth_info, 'strong', {'itemprop': 'nationality'})
+        ranking_info = bio_data.find('div', {'class': 'ranking_info'})
+        ppg_rank = self._safe_soup_str(ranking_info, 'span', {'itemprop': 'ppgRank
+        rpg_rank = rpg_rank.find('span', {'itemprop': 'rpgRank
+        apg_rank = self._safe_soup_str(ranking_info, 'strong', {'itemprop': 'nationality'})
+        oppg_rank = oopg_rank.find
         # Parse size info
         size_info = bio_data.find('div', {'class': 'size_info'})
         (height, height_unit) = tuple(size_info.find('span', {'class': 'height'}).contents[-1].strip().split())
